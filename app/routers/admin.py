@@ -1,13 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 import httpx
 import uuid
+import logging
 
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.config import settings
 from app.models.medicine import ActiveIngredient
 from app.models.interaction import FoodItem, SupplementIngredient, InteractionRule
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -116,6 +119,23 @@ async def sync_dur(db: AsyncSession = Depends(get_db)):
             added += await _process_page(db, items)
 
     return {"message": f"DUR 병용금기 {added}건 저장 완료", "total_fetched": total_fetched}
+
+
+@router.get("/probe-dur")
+async def probe_dur():
+    """DUR API 첫 번째 항목의 실제 필드명과 값 확인용"""
+    if not settings.dur_api_key:
+        raise HTTPException(status_code=400, detail="DUR_API_KEY가 설정되지 않았습니다.")
+    async with httpx.AsyncClient() as client:
+        data = await _fetch_page(client, 1, num_rows=1)
+    body = data.get("body", {})
+    items = body.get("items", [])
+    if isinstance(items, dict):
+        items = [items]
+    return {
+        "totalCount": body.get("totalCount"),
+        "first_item": items[0] if items else None,
+    }
 
 
 @router.get("/stats")
