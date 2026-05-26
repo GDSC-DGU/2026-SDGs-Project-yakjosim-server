@@ -23,10 +23,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from app.routers import medicines, interactions, ocr  # noqa: E402
+from app.routers import medicines, interactions, ocr, admin  # noqa: E402
 app.include_router(medicines.router, prefix="/api/v1")
 app.include_router(interactions.router, prefix="/api/v1")
 app.include_router(ocr.router, prefix="/api/v1")
+app.include_router(admin.router, prefix="/api/v1")
 
 @app.get("/health")
 async def health():
