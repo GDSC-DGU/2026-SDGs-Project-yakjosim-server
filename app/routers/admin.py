@@ -41,27 +41,7 @@ async def _get_or_create_ingredient(db: AsyncSession, code: str, name_ko: str) -
     return row
 
 
-@router.post("/sync-dur")
-async def sync_dur(db: AsyncSession = Depends(get_db)):
-    if not settings.dur_api_key:
-        raise HTTPException(status_code=400, detail="DUR_API_KEY가 설정되지 않았습니다.")
-
-    async with httpx.AsyncClient() as client:
-        first = await _fetch_page(client, 1)
-        body = first.get("body", {})
-        total = int(body.get("totalCount", 0))
-        items = body.get("items", [])
-        if isinstance(items, dict):
-            items = [items]
-
-        pages = (total + 99) // 100
-        for page in range(2, pages + 1):
-            data = await _fetch_page(client, page)
-            more = data.get("body", {}).get("items", [])
-            if isinstance(more, dict):
-                more = [more]
-            items.extend(more)
-
+async def _process_page(db: AsyncSession, items: list) -> int:
     added = 0
     for item in items:
         ingr_code = item.get("INGR_CODE", "")
@@ -99,9 +79,43 @@ async def sync_dur(db: AsyncSession = Depends(get_db)):
                 is_active=True,
             ))
             added += 1
-
     await db.commit()
-    return {"message": f"DUR 병용금기 {added}건 저장 완료", "total_fetched": len(items)}
+    return added
+
+
+@router.post("/sync-dur")
+async def sync_dur(db: AsyncSession = Depends(get_db)):
+    if not settings.dur_api_key:
+        raise HTTPException(status_code=400, detail="DUR_API_KEY가 설정되지 않았습니다.")
+
+    added = 0
+    total_fetched = 0
+
+    async with httpx.AsyncClient() as client:
+        # 1페이지로 전체 건수 파악
+        first = await _fetch_page(client, 1, num_rows=50)
+        body = first.get("body", {})
+        total = int(body.get("totalCount", 0))
+        pages = (total + 49) // 50
+
+        items = body.get("items", [])
+        if isinstance(items, dict):
+            items = [items]
+        total_fetched += len(items)
+        added += await _process_page(db, items)
+
+        # 나머지 페이지: 페이지마다 처리 후 즉시 커밋
+        for page in range(2, pages + 1):
+            data = await _fetch_page(client, page, num_rows=50)
+            items = data.get("body", {}).get("items", [])
+            if isinstance(items, dict):
+                items = [items]
+            elif not isinstance(items, list):
+                items = []
+            total_fetched += len(items)
+            added += await _process_page(db, items)
+
+    return {"message": f"DUR 병용금기 {added}건 저장 완료", "total_fetched": total_fetched}
 
 
 @router.get("/stats")
